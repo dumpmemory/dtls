@@ -15,8 +15,8 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/pion/dtls/v2/pkg/crypto/elliptic"
-	"github.com/pion/dtls/v2/pkg/crypto/hash"
+	"github.com/pion/dtls/v3/pkg/crypto/elliptic"
+	"github.com/pion/dtls/v3/pkg/crypto/hash"
 )
 
 type ecdsaSignature struct {
@@ -89,13 +89,11 @@ func verifyKeySignature(message, remoteKeySignature []byte, hashAlgorithm hash.A
 		}
 		return nil
 	case *rsa.PublicKey:
-		switch certificate.SignatureAlgorithm {
-		case x509.SHA1WithRSA, x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA:
-			hashed := hashAlgorithm.Digest(message)
-			return rsa.VerifyPKCS1v15(p, hashAlgorithm.CryptoHash(), hashed, remoteKeySignature)
-		default:
-			return errKeySignatureVerifyUnimplemented
+		hashed := hashAlgorithm.Digest(message)
+		if rsa.VerifyPKCS1v15(p, hashAlgorithm.CryptoHash(), hashed, remoteKeySignature) != nil {
+			return errKeySignatureMismatch
 		}
+		return nil
 	}
 
 	return errKeySignatureVerifyUnimplemented
@@ -158,13 +156,11 @@ func verifyCertificateVerify(handshakeBodies []byte, hashAlgorithm hash.Algorith
 		}
 		return nil
 	case *rsa.PublicKey:
-		switch certificate.SignatureAlgorithm {
-		case x509.SHA1WithRSA, x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA:
-			hash := hashAlgorithm.Digest(handshakeBodies)
-			return rsa.VerifyPKCS1v15(p, hashAlgorithm.CryptoHash(), hash, remoteKeySignature)
-		default:
-			return errKeySignatureVerifyUnimplemented
+		hash := hashAlgorithm.Digest(handshakeBodies)
+		if rsa.VerifyPKCS1v15(p, hashAlgorithm.CryptoHash(), hash, remoteKeySignature) != nil {
+			return errKeySignatureMismatch
 		}
+		return nil
 	}
 
 	return errKeySignatureVerifyUnimplemented

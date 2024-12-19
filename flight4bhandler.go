@@ -7,12 +7,12 @@ import (
 	"bytes"
 	"context"
 
-	"github.com/pion/dtls/v2/pkg/crypto/prf"
-	"github.com/pion/dtls/v2/pkg/protocol"
-	"github.com/pion/dtls/v2/pkg/protocol/alert"
-	"github.com/pion/dtls/v2/pkg/protocol/extension"
-	"github.com/pion/dtls/v2/pkg/protocol/handshake"
-	"github.com/pion/dtls/v2/pkg/protocol/recordlayer"
+	"github.com/pion/dtls/v3/pkg/crypto/prf"
+	"github.com/pion/dtls/v3/pkg/protocol"
+	"github.com/pion/dtls/v3/pkg/protocol/alert"
+	"github.com/pion/dtls/v3/pkg/protocol/extension"
+	"github.com/pion/dtls/v3/pkg/protocol/handshake"
+	"github.com/pion/dtls/v3/pkg/protocol/recordlayer"
 )
 
 func flight4bParse(_ context.Context, _ flightConn, state *State, cache *handshakeCache, cfg *handshakeConfig) (flightVal, *alert.Alert, error) {
@@ -61,7 +61,8 @@ func flight4bGenerate(_ flightConn, state *State, cache *handshakeCache, cfg *ha
 	}
 	if state.getSRTPProtectionProfile() != 0 {
 		extensions = append(extensions, &extension.UseSRTP{
-			ProtectionProfiles: []SRTPProtectionProfile{state.getSRTPProtectionProfile()},
+			ProtectionProfiles:  []SRTPProtectionProfile{state.getSRTPProtectionProfile()},
+			MasterKeyIdentifier: cfg.localSRTPMasterKeyIdentifier,
 		})
 	}
 
@@ -77,15 +78,21 @@ func flight4bGenerate(_ flightConn, state *State, cache *handshakeCache, cfg *ha
 	}
 
 	cipherSuiteID := uint16(state.cipherSuite.ID())
-	serverHello := &handshake.Handshake{
-		Message: &handshake.MessageServerHello{
-			Version:           protocol.Version1_2,
-			Random:            state.localRandom,
-			SessionID:         state.SessionID,
-			CipherSuiteID:     &cipherSuiteID,
-			CompressionMethod: defaultCompressionMethods()[0],
-			Extensions:        extensions,
-		},
+	var serverHello handshake.Handshake
+
+	serverHelloMessage := &handshake.MessageServerHello{
+		Version:           protocol.Version1_2,
+		Random:            state.localRandom,
+		SessionID:         state.SessionID,
+		CipherSuiteID:     &cipherSuiteID,
+		CompressionMethod: defaultCompressionMethods()[0],
+		Extensions:        extensions,
+	}
+
+	if cfg.serverHelloMessageHook != nil {
+		serverHello = handshake.Handshake{Message: cfg.serverHelloMessageHook(*serverHelloMessage)}
+	} else {
+		serverHello = handshake.Handshake{Message: serverHelloMessage}
 	}
 
 	serverHello.Header.MessageSequence = uint16(state.handshakeSendSequence)
@@ -112,7 +119,7 @@ func flight4bGenerate(_ flightConn, state *State, cache *handshakeCache, cfg *ha
 				Header: recordlayer.Header{
 					Version: protocol.Version1_2,
 				},
-				Content: serverHello,
+				Content: &serverHello,
 			},
 		},
 		&packet{

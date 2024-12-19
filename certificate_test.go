@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/pion/dtls/v2/pkg/crypto/selfsign"
+	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 )
 
 func TestGetCertificate(t *testing.T) {
@@ -77,7 +77,7 @@ func TestGetCertificate(t *testing.T) {
 		},
 		{
 			desc: "Get certificate from callback",
-			getCertificate: func(info *ClientHelloInfo) (*tls.Certificate, error) {
+			getCertificate: func(*ClientHelloInfo) (*tls.Certificate, error) {
 				return &certificateTest, nil
 			},
 			expectedCertificate: certificateTest,

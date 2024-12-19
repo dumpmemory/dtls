@@ -8,16 +8,16 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 
-	"github.com/pion/dtls/v2/internal/ciphersuite"
-	"github.com/pion/dtls/v2/pkg/crypto/clientcertificate"
-	"github.com/pion/dtls/v2/pkg/crypto/elliptic"
-	"github.com/pion/dtls/v2/pkg/crypto/prf"
-	"github.com/pion/dtls/v2/pkg/crypto/signaturehash"
-	"github.com/pion/dtls/v2/pkg/protocol"
-	"github.com/pion/dtls/v2/pkg/protocol/alert"
-	"github.com/pion/dtls/v2/pkg/protocol/extension"
-	"github.com/pion/dtls/v2/pkg/protocol/handshake"
-	"github.com/pion/dtls/v2/pkg/protocol/recordlayer"
+	"github.com/pion/dtls/v3/internal/ciphersuite"
+	"github.com/pion/dtls/v3/pkg/crypto/clientcertificate"
+	"github.com/pion/dtls/v3/pkg/crypto/elliptic"
+	"github.com/pion/dtls/v3/pkg/crypto/prf"
+	"github.com/pion/dtls/v3/pkg/crypto/signaturehash"
+	"github.com/pion/dtls/v3/pkg/protocol"
+	"github.com/pion/dtls/v3/pkg/protocol/alert"
+	"github.com/pion/dtls/v3/pkg/protocol/extension"
+	"github.com/pion/dtls/v3/pkg/protocol/handshake"
+	"github.com/pion/dtls/v3/pkg/protocol/recordlayer"
 )
 
 func flight4Parse(ctx context.Context, c flightConn, state *State, cache *handshakeCache, cfg *handshakeConfig) (flightVal, *alert.Alert, error) { //nolint:gocognit
@@ -183,7 +183,11 @@ func flight4Parse(ctx context.Context, c flightConn, state *State, cache *handsh
 
 	if state.cipherSuite.AuthenticationType() == CipherSuiteAuthenticationTypeAnonymous {
 		if cfg.verifyConnection != nil {
-			if err := cfg.verifyConnection(state.clone()); err != nil {
+			stateClone, err := state.clone()
+			if err != nil {
+				return 0, &alert.Alert{Level: alert.Fatal, Description: alert.InternalError}, err
+			}
+			if err := cfg.verifyConnection(stateClone); err != nil {
 				return 0, &alert.Alert{Level: alert.Fatal, Description: alert.BadCertificate}, err
 			}
 		}
@@ -210,7 +214,11 @@ func flight4Parse(ctx context.Context, c flightConn, state *State, cache *handsh
 		// go to flight6
 	}
 	if cfg.verifyConnection != nil {
-		if err := cfg.verifyConnection(state.clone()); err != nil {
+		stateClone, err := state.clone()
+		if err != nil {
+			return 0, &alert.Alert{Level: alert.Fatal, Description: alert.InternalError}, err
+		}
+		if err := cfg.verifyConnection(stateClone); err != nil {
 			return 0, &alert.Alert{Level: alert.Fatal, Description: alert.BadCertificate}, err
 		}
 	}
@@ -230,7 +238,8 @@ func flight4Generate(_ flightConn, state *State, _ *handshakeCache, cfg *handsha
 	}
 	if state.getSRTPProtectionProfile() != 0 {
 		extensions = append(extensions, &extension.UseSRTP{
-			ProtectionProfiles: []SRTPProtectionProfile{state.getSRTPProtectionProfile()},
+			ProtectionProfiles:  []SRTPProtectionProfile{state.getSRTPProtectionProfile()},
+			MasterKeyIdentifier: cfg.localSRTPMasterKeyIdentifier,
 		})
 	}
 	if state.cipherSuite.AuthenticationType() == CipherSuiteAuthenticationTypeCertificate {
@@ -255,8 +264,8 @@ func flight4Generate(_ flightConn, state *State, _ *handshakeCache, cfg *handsha
 	// parsing the ClientHello, so avoid setting local connection ID if the
 	// client won't send it.
 	if cfg.connectionIDGenerator != nil && state.remoteConnectionID != nil {
-		state.localConnectionID = cfg.connectionIDGenerator()
-		extensions = append(extensions, &extension.ConnectionID{CID: state.localConnectionID})
+		state.setLocalConnectionID(cfg.connectionIDGenerator())
+		extensions = append(extensions, &extension.ConnectionID{CID: state.getLocalConnectionID()})
 	}
 
 	var pkts []*packet
@@ -269,21 +278,29 @@ func flight4Generate(_ flightConn, state *State, _ *handshakeCache, cfg *handsha
 		}
 	}
 
+	serverHello := &handshake.MessageServerHello{
+		Version:           protocol.Version1_2,
+		Random:            state.localRandom,
+		SessionID:         state.SessionID,
+		CipherSuiteID:     &cipherSuiteID,
+		CompressionMethod: defaultCompressionMethods()[0],
+		Extensions:        extensions,
+	}
+
+	var content handshake.Handshake
+
+	if cfg.serverHelloMessageHook != nil {
+		content = handshake.Handshake{Message: cfg.serverHelloMessageHook(*serverHello)}
+	} else {
+		content = handshake.Handshake{Message: serverHello}
+	}
+
 	pkts = append(pkts, &packet{
 		record: &recordlayer.RecordLayer{
 			Header: recordlayer.Header{
 				Version: protocol.Version1_2,
 			},
-			Content: &handshake.Handshake{
-				Message: &handshake.MessageServerHello{
-					Version:           protocol.Version1_2,
-					Random:            state.localRandom,
-					SessionID:         state.SessionID,
-					CipherSuiteID:     &cipherSuiteID,
-					CompressionMethod: defaultCompressionMethods()[0],
-					Extensions:        extensions,
-				},
-			},
+			Content: &content,
 		},
 	})
 
@@ -292,6 +309,7 @@ func flight4Generate(_ flightConn, state *State, _ *handshakeCache, cfg *handsha
 		certificate, err := cfg.getCertificate(&ClientHelloInfo{
 			ServerName:   state.serverName,
 			CipherSuites: []ciphersuite.ID{state.cipherSuite.ID()},
+			RandomBytes:  state.remoteRandom.RandomBytes,
 		})
 		if err != nil {
 			return nil, &alert.Alert{Level: alert.Fatal, Description: alert.HandshakeFailure}, err
@@ -354,18 +372,27 @@ func flight4Generate(_ flightConn, state *State, _ *handshakeCache, cfg *handsha
 				// nolint:staticcheck // ignoring tlsCert.RootCAs.Subjects is deprecated ERR because cert does not come from SystemCertPool and it's ok if certificate authorities is empty.
 				certificateAuthorities = cfg.clientCAs.Subjects()
 			}
+
+			certReq := &handshake.MessageCertificateRequest{
+				CertificateTypes:            []clientcertificate.Type{clientcertificate.RSASign, clientcertificate.ECDSASign},
+				SignatureHashAlgorithms:     cfg.localSignatureSchemes,
+				CertificateAuthoritiesNames: certificateAuthorities,
+			}
+
+			var content handshake.Handshake
+
+			if cfg.certificateRequestMessageHook != nil {
+				content = handshake.Handshake{Message: cfg.certificateRequestMessageHook(*certReq)}
+			} else {
+				content = handshake.Handshake{Message: certReq}
+			}
+
 			pkts = append(pkts, &packet{
 				record: &recordlayer.RecordLayer{
 					Header: recordlayer.Header{
 						Version: protocol.Version1_2,
 					},
-					Content: &handshake.Handshake{
-						Message: &handshake.MessageCertificateRequest{
-							CertificateTypes:            []clientcertificate.Type{clientcertificate.RSASign, clientcertificate.ECDSASign},
-							SignatureHashAlgorithms:     cfg.localSignatureSchemes,
-							CertificateAuthoritiesNames: certificateAuthorities,
-						},
-					},
+					Content: &content,
 				},
 			})
 		}

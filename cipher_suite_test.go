@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/dtls/v2/internal/ciphersuite"
-	dtlsnet "github.com/pion/dtls/v2/pkg/net"
+	"github.com/pion/dtls/v3/internal/ciphersuite"
+	dtlsnet "github.com/pion/dtls/v3/pkg/net"
 	"github.com/pion/transport/v3/dpipe"
 	"github.com/pion/transport/v3/test"
 )
@@ -98,13 +98,13 @@ func TestCustomCipherSuite(t *testing.T) {
 		}
 	}
 
-	t.Run("Custom ID", func(t *testing.T) {
+	t.Run("Custom ID", func(*testing.T) {
 		runTest(func() []CipherSuite {
 			return []CipherSuite{&testCustomCipherSuite{authenticationType: CipherSuiteAuthenticationTypeCertificate}}
 		})
 	})
 
-	t.Run("Anonymous Cipher", func(t *testing.T) {
+	t.Run("Anonymous Cipher", func(*testing.T) {
 		runTest(func() []CipherSuite {
 			return []CipherSuite{&testCustomCipherSuite{authenticationType: CipherSuiteAuthenticationTypeAnonymous}}
 		})

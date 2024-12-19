@@ -6,12 +6,12 @@ package dtls
 import (
 	"context"
 
-	"github.com/pion/dtls/v2/pkg/crypto/elliptic"
-	"github.com/pion/dtls/v2/pkg/protocol"
-	"github.com/pion/dtls/v2/pkg/protocol/alert"
-	"github.com/pion/dtls/v2/pkg/protocol/extension"
-	"github.com/pion/dtls/v2/pkg/protocol/handshake"
-	"github.com/pion/dtls/v2/pkg/protocol/recordlayer"
+	"github.com/pion/dtls/v3/pkg/crypto/elliptic"
+	"github.com/pion/dtls/v3/pkg/protocol"
+	"github.com/pion/dtls/v3/pkg/protocol/alert"
+	"github.com/pion/dtls/v3/pkg/protocol/extension"
+	"github.com/pion/dtls/v3/pkg/protocol/handshake"
+	"github.com/pion/dtls/v3/pkg/protocol/recordlayer"
 )
 
 func flight1Parse(ctx context.Context, c flightConn, state *State, cache *handshakeCache, cfg *handshakeConfig) (flightVal, *alert.Alert, error) {
@@ -57,6 +57,10 @@ func flight1Generate(c flightConn, state *State, _ *handshakeCache, cfg *handsha
 		return nil, nil, err
 	}
 
+	if cfg.helloRandomBytesGenerator != nil {
+		state.localRandom.RandomBytes = cfg.helloRandomBytesGenerator()
+	}
+
 	extensions := []extension.Extension{
 		&extension.SupportedSignatureAlgorithms{
 			SignatureHashAlgorithms: cfg.localSignatureSchemes,
@@ -87,7 +91,8 @@ func flight1Generate(c flightConn, state *State, _ *handshakeCache, cfg *handsha
 
 	if len(cfg.localSRTPProtectionProfiles) > 0 {
 		extensions = append(extensions, &extension.UseSRTP{
-			ProtectionProfiles: cfg.localSRTPProtectionProfiles,
+			ProtectionProfiles:  cfg.localSRTPProtectionProfiles,
+			MasterKeyIdentifier: cfg.localSRTPMasterKeyIdentifier,
 		})
 	}
 
@@ -122,15 +127,33 @@ func flight1Generate(c flightConn, state *State, _ *handshakeCache, cfg *handsha
 	// in which case we are just requesting that the server send us a CID to
 	// use.
 	if cfg.connectionIDGenerator != nil {
-		state.localConnectionID = cfg.connectionIDGenerator()
+		state.setLocalConnectionID(cfg.connectionIDGenerator())
 		// The presence of a generator indicates support for connection IDs. We
 		// use the presence of a non-nil local CID in flight 3 to determine
 		// whether we send a CID in the second ClientHello, so we convert any
 		// nil CID returned by a generator to []byte{}.
-		if state.localConnectionID == nil {
-			state.localConnectionID = []byte{}
+		if state.getLocalConnectionID() == nil {
+			state.setLocalConnectionID([]byte{})
 		}
-		extensions = append(extensions, &extension.ConnectionID{CID: state.localConnectionID})
+		extensions = append(extensions, &extension.ConnectionID{CID: state.getLocalConnectionID()})
+	}
+
+	clientHello := &handshake.MessageClientHello{
+		Version:            protocol.Version1_2,
+		SessionID:          state.SessionID,
+		Cookie:             state.cookie,
+		Random:             state.localRandom,
+		CipherSuiteIDs:     cipherSuiteIDs(cfg.localCipherSuites),
+		CompressionMethods: defaultCompressionMethods(),
+		Extensions:         extensions,
+	}
+
+	var content handshake.Handshake
+
+	if cfg.clientHelloMessageHook != nil {
+		content = handshake.Handshake{Message: cfg.clientHelloMessageHook(*clientHello)}
+	} else {
+		content = handshake.Handshake{Message: clientHello}
 	}
 
 	return []*packet{
@@ -139,17 +162,7 @@ func flight1Generate(c flightConn, state *State, _ *handshakeCache, cfg *handsha
 				Header: recordlayer.Header{
 					Version: protocol.Version1_2,
 				},
-				Content: &handshake.Handshake{
-					Message: &handshake.MessageClientHello{
-						Version:            protocol.Version1_2,
-						SessionID:          state.SessionID,
-						Cookie:             state.cookie,
-						Random:             state.localRandom,
-						CipherSuiteIDs:     cipherSuiteIDs(cfg.localCipherSuites),
-						CompressionMethods: defaultCompressionMethods(),
-						Extensions:         extensions,
-					},
-				},
+				Content: &content,
 			},
 		},
 	}, nil, nil

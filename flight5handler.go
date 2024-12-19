@@ -9,12 +9,12 @@ import (
 	"crypto"
 	"crypto/x509"
 
-	"github.com/pion/dtls/v2/pkg/crypto/prf"
-	"github.com/pion/dtls/v2/pkg/crypto/signaturehash"
-	"github.com/pion/dtls/v2/pkg/protocol"
-	"github.com/pion/dtls/v2/pkg/protocol/alert"
-	"github.com/pion/dtls/v2/pkg/protocol/handshake"
-	"github.com/pion/dtls/v2/pkg/protocol/recordlayer"
+	"github.com/pion/dtls/v3/pkg/crypto/prf"
+	"github.com/pion/dtls/v3/pkg/crypto/signaturehash"
+	"github.com/pion/dtls/v3/pkg/protocol"
+	"github.com/pion/dtls/v3/pkg/protocol/alert"
+	"github.com/pion/dtls/v3/pkg/protocol/handshake"
+	"github.com/pion/dtls/v3/pkg/protocol/recordlayer"
 )
 
 func flight5Parse(_ context.Context, c flightConn, state *State, cache *handshakeCache, cfg *handshakeConfig) (flightVal, *alert.Alert, error) {
@@ -344,8 +344,12 @@ func initializeCipherSuite(state *State, cache *handshakeCache, cfg *handshakeCo
 		}
 	}
 	if cfg.verifyConnection != nil {
-		if err = cfg.verifyConnection(state.clone()); err != nil {
-			return &alert.Alert{Level: alert.Fatal, Description: alert.BadCertificate}, err
+		stateClone, errC := state.clone()
+		if errC != nil {
+			return &alert.Alert{Level: alert.Fatal, Description: alert.InternalError}, errC
+		}
+		if errC = cfg.verifyConnection(stateClone); errC != nil {
+			return &alert.Alert{Level: alert.Fatal, Description: alert.BadCertificate}, errC
 		}
 	}
 

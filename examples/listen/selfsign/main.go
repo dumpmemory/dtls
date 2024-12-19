@@ -11,9 +11,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/pion/dtls/v2"
-	"github.com/pion/dtls/v2/examples/util"
-	"github.com/pion/dtls/v2/pkg/crypto/selfsign"
+	"github.com/pion/dtls/v3"
+	"github.com/pion/dtls/v3/examples/util"
+	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 )
 
 func main() {
@@ -24,10 +24,6 @@ func main() {
 	certificate, genErr := selfsign.GenerateSelfSigned()
 	util.Check(genErr)
 
-	// Create parent context to cleanup handshaking connections on exit.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	//
 	// Everything below is the pion-DTLS API! Thanks for using it ❤️.
 	//
@@ -36,10 +32,6 @@ func main() {
 	config := &dtls.Config{
 		Certificates:         []tls.Certificate{certificate},
 		ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
-		// Create timeout context for accepted connection.
-		ConnectContextMaker: func() (context.Context, func()) {
-			return context.WithTimeout(ctx, 30*time.Second)
-		},
 	}
 
 	// Connect to a DTLS server
@@ -64,6 +56,14 @@ func main() {
 			// `conn` is of type `net.Conn` but may be casted to `dtls.Conn`
 			// using `dtlsConn := conn.(*dtls.Conn)` in order to to expose
 			// functions like `ConnectionState` etc.
+
+			// Perform the handshake with a 30-second timeout
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			dtlsConn, ok := conn.(*dtls.Conn)
+			if ok {
+				util.Check(dtlsConn.HandshakeContext(ctx))
+			}
+			cancel()
 
 			// Register the connection with the chat hub
 			if err == nil {

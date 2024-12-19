@@ -13,12 +13,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pion/dtls/v2/pkg/crypto/selfsign"
-	dtlsnet "github.com/pion/dtls/v2/pkg/net"
+	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
+	dtlsnet "github.com/pion/dtls/v3/pkg/net"
 	"github.com/pion/transport/v3/test"
 )
 
-var errMessageMissmatch = errors.New("messages missmatch")
+var (
+	errMessageMissmatch       = errors.New("messages missmatch")
+	errInvalidConnectionState = errors.New("failed to get connection state")
+)
 
 func TestResumeClient(t *testing.T) {
 	DoTestResume(t, Client, Server)
@@ -120,7 +123,10 @@ func DoTestResume(t *testing.T, newLocal, newRemote func(net.PacketConn, net.Add
 	}
 
 	// Serialize and deserialize state
-	state := local.ConnectionState()
+	state, ok := local.ConnectionState()
+	if !ok {
+		fatal(t, errChan, errInvalidConnectionState)
+	}
 	var b []byte
 	b, err = state.MarshalBinary()
 	if err != nil {

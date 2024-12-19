@@ -4,16 +4,17 @@
 package dtls
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"io"
+	"net"
 	"time"
 
-	"github.com/pion/dtls/v2/pkg/crypto/elliptic"
+	"github.com/pion/dtls/v3/pkg/crypto/elliptic"
+	"github.com/pion/dtls/v3/pkg/protocol/handshake"
 	"github.com/pion/logging"
 )
 
@@ -44,6 +45,10 @@ type Config struct {
 	// Servers will assert that clients send one of these profiles and will respond as needed
 	SRTPProtectionProfiles []SRTPProtectionProfile
 
+	// SRTPMasterKeyIdentifier value (if any) is sent via the use_srtp
+	// extension for Clients and Servers
+	SRTPMasterKeyIdentifier []byte
+
 	// ClientAuth determines the server's policy for
 	// TLS Client Authentication. The default is NoClientCert.
 	ClientAuth ClientAuthType
@@ -55,6 +60,10 @@ type Config struct {
 	// FlightInterval controls how often we send outbound handshake messages
 	// defaults to time.Second
 	FlightInterval time.Duration
+
+	// DisableRetransmitBackoff can be used to the disable the backoff feature
+	// when sending outbound messages as specified in RFC 4347 4.2.4.1
+	DisableRetransmitBackoff bool
 
 	// PSK sets the pre-shared key used by this DTLS connection
 	// If PSK is non-nil only PSK CipherSuites will be used
@@ -111,15 +120,6 @@ type Config struct {
 	ServerName string
 
 	LoggerFactory logging.LoggerFactory
-
-	// ConnectContextMaker is a function to make a context used in Dial(),
-	// Client(), Server(), and Accept(). If nil, the default ConnectContextMaker
-	// is used. It can be implemented as following.
-	//
-	// 	func ConnectContextMaker() (context.Context, func()) {
-	// 		return context.WithTimeout(context.Background(), 30*time.Second)
-	// 	}
-	ConnectContextMaker func() (context.Context, func())
 
 	// MTU is the length at which handshake messages will be fragmented to
 	// fit within the maximum transmission unit (default is 1200 bytes)
@@ -196,17 +196,32 @@ type Config struct {
 	// If no PaddingLengthGenerator is specified, padding will not be applied.
 	// https://datatracker.ietf.org/doc/html/rfc9146#section-4
 	PaddingLengthGenerator func(uint) uint
-}
 
-func defaultConnectContextMaker() (context.Context, func()) {
-	return context.WithTimeout(context.Background(), 30*time.Second)
-}
+	// HelloRandomBytesGenerator generates custom client hello random bytes.
+	HelloRandomBytesGenerator func() [handshake.RandomBytesLength]byte
 
-func (c *Config) connectContextMaker() (context.Context, func()) {
-	if c.ConnectContextMaker == nil {
-		return defaultConnectContextMaker()
-	}
-	return c.ConnectContextMaker()
+	// Handshake hooks: hooks can be used for testing invalid messages,
+	// mimicking other implementations or randomizing fields, which is valuable
+	// for applications that need censorship-resistance by making
+	// fingerprinting more difficult.
+
+	// ClientHelloMessageHook, if not nil, is called when a Client Hello message is sent
+	// from a client. The returned handshake message replaces the original message.
+	ClientHelloMessageHook func(handshake.MessageClientHello) handshake.Message
+
+	// ServerHelloMessageHook, if not nil, is called when a Server Hello message is sent
+	// from a server. The returned handshake message replaces the original message.
+	ServerHelloMessageHook func(handshake.MessageServerHello) handshake.Message
+
+	// CertificateRequestMessageHook, if not nil, is called when a Certificate Request
+	// message is sent from a server. The returned handshake message replaces the original message.
+	CertificateRequestMessageHook func(handshake.MessageCertificateRequest) handshake.Message
+
+	// OnConnectionAttempt is fired Whenever a connection attempt is made, the server or application can call this callback function.
+	// The callback function can then implement logic to handle the connection attempt, such as logging the attempt,
+	// checking against a list of blocked IPs, or counting the attempts to prevent brute force attacks.
+	// If the callback function returns an error, the connection attempt will be aborted.
+	OnConnectionAttempt func(net.Addr) error
 }
 
 func (c *Config) includeCertificateSuites() bool {

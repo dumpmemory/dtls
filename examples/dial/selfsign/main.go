@@ -11,9 +11,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/pion/dtls/v2"
-	"github.com/pion/dtls/v2/examples/util"
-	"github.com/pion/dtls/v2/pkg/crypto/selfsign"
+	"github.com/pion/dtls/v3"
+	"github.com/pion/dtls/v3/examples/util"
+	"github.com/pion/dtls/v3/pkg/crypto/selfsign"
 )
 
 func main() {
@@ -38,11 +38,16 @@ func main() {
 	// Connect to a DTLS server
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	dtlsConn, err := dtls.DialWithContext(ctx, "udp", addr, config)
+	dtlsConn, err := dtls.Dial("udp", addr, config)
 	util.Check(err)
 	defer func() {
 		util.Check(dtlsConn.Close())
 	}()
+
+	if err := dtlsConn.HandshakeContext(ctx); err != nil {
+		fmt.Printf("Failed to handshake with server: %v\n", err)
+		return
+	}
 
 	fmt.Println("Connected; type 'exit' to shutdown gracefully")
 

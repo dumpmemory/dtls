@@ -9,10 +9,11 @@ import (
 	"encoding/pem"
 	"testing"
 
-	"github.com/pion/dtls/v2/pkg/crypto/elliptic"
-	"github.com/pion/dtls/v2/pkg/crypto/hash"
+	"github.com/pion/dtls/v3/pkg/crypto/elliptic"
+	"github.com/pion/dtls/v3/pkg/crypto/hash"
 )
 
+// nolint: gosec
 const rawPrivateKey = `
 -----BEGIN RSA PRIVATE KEY-----
 MIIEowIBAAKCAQEAxIA2BrrnR2sIlATsp7aRBD/3krwZ7vt9dNeoDQAee0s6SuYP
